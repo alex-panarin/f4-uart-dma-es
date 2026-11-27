@@ -1,0 +1,67 @@
+# ==========================================
+# STM32CubeIDE 2.2.0 .gitignore
+# ==========================================
+
+# 1. Директории сборки (Build directories)
+# STM32CubeIDE обычно создает эти папки при компиляции
+/Debug/
+/Release/
+/build/
+/cmake-build-*/
+
+# 2. Объектные файлы, библиотеки и артефакты компиляции
+*.o
+*.obj
+*.a
+*.lib
+*.d          # Файлы зависимостей (dependency files)
+*.su         # Файлы анализа использования стека (stack usage)
+*.map        # Файлы карты памяти линкера
+*.lst        # Файлы листинга ассемблера
+*.elf        # Исполняемый файл для отладки
+*.hex        # Intel HEX файл для прошивки
+*.bin        # Бинарный файл для прошивки
+*.crf
+*.htm
+*.ltc
+*.m51
+*.plf
+
+# 3. Специфичные файлы STM32CubeIDE / Eclipse
+.metadata/
+Debug/
+.cache/
+.loadpath
+.externalToolBuilders/
+RemoteSystemsTempFiles/
+__pycache__/
+
+# Файлы конфигурации запуска (Launch configurations)
+# Если вы хотите делиться настройками отладки с командой, закомментируйте следующую строку
+*.launch
+
+# 4. Временные файлы STM32CubeMX и IDE
+*.tmp
+*.log
+*.bak
+*.orig
+STM32CubeIDE/  # Иногда создается для специфичных настроек конфигураций
+.mxproject     # Временные файлы генератора кода (если используется отдельно)
+
+# 5. Файлы операционных систем
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# 6. Временные файлы редакторов и IDE
+*~
+*.swp
+*.swo
+*.tmp
+.project.orig
+.cproject.orig
