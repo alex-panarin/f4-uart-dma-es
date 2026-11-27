@@ -16,6 +16,7 @@
 #include "w25_dma.h"
 #include "clock.h"
 #include "power.h"
+#include "rtc.h"
 
 #define CMD_ECHO     	0x01U
 #define CMD_STATS    	0x02U
@@ -38,6 +39,10 @@
 #define CMD_SLEEP     0x27U
 #define CMD_STOP      0x28U
 #define CMD_PWRSTATS  0x29U
+#define CMD_RTC_SET      0x2AU
+#define CMD_RTC_GET      0x2BU
+#define CMD_RTC_STOPWAKE 0x2CU
+#define CMD_RTC_STATS    0x2DU
 
 #define FSESS_MAX_PAGES 256U   /* битмап 32 байта = до 64 КБ */
 
@@ -479,6 +484,98 @@ static void handle_fbench(const uint8_t *p, uint16_t len)
     reply_buf(CMD_FBENCH | 0x80U, out, sizeof(out));
 }
 
+static void handle_rtc_set(const uint8_t *p, uint16_t len)
+{
+    uint8_t st = 1U;
+    if (len >= 6U) {
+        rtc_time_t t;
+        t.yy = p[0]; t.mm = p[1]; t.dd = p[2];
+        t.hh = p[3]; t.mi = p[4]; t.ss = p[5];
+        t.sub_ms = 0U;
+        st = (rtc_set(&t) == 0) ? 0U : 1U;
+    }
+    reply_buf(CMD_RTC_SET | 0x80U, &st, 1U);
+}
+
+static void handle_rtc_get(void)
+{
+    rtc_time_t t;
+
+    rtc_get(&t);
+
+    uint8_t b[16];
+    b[0] = t.yy; b[1] = t.mm; b[2] = t.dd;
+    b[3] = t.hh; b[4] = t.mi; b[5] = t.ss;
+    b[6] = (uint8_t)(t.sub_ms & 0xFFU);
+    b[7] = (uint8_t)(t.sub_ms >> 8);
+    b[8] = (uint8_t)rtc_source();
+    b[9] = 0U; b[10] = 0U; b[11] = 0U;
+    wr_u32(&b[12], rtc_epoch(&t));
+    reply_buf(CMD_RTC_GET | 0x80U, b, sizeof(b));
+}
+
+static void handle_rtc_stopwake(const uint8_t *p, uint16_t len)
+{
+    uint32_t secs = (len >= 4U) ? rd_u32(p) : 5U;
+    rtc_time_t t;
+    uint8_t b[40];
+    uint32_t m0, m1, m2, m3, m4;
+
+    m0 = DWT_CYCCNT;
+    rtc_get(&t);                            /* BYPSHAD=1: ждать нечего */
+    uint32_t e0 = rtc_epoch(&t);
+    m1 = DWT_CYCCNT;
+
+    if (rtc_wut_arm(secs) != 0) {
+        wr_u32(&b[0], e0); wr_u32(&b[4], e0);
+        wr_u32(&b[8], 0U); wr_u32(&b[12], 1U);
+        wr_u32(&b[16], 0U); wr_u32(&b[20], 0U);
+        wr_u32(&b[24], 0U); wr_u32(&b[28], 0U);
+        wr_u32(&b[32], 0U); wr_u32(&b[36], 0U);
+        reply_buf(CMD_RTC_STOPWAKE | 0x80U, b, sizeof(b));
+        return;
+    }
+
+    uint32_t wutr = RTC_WUTR;
+    uint32_t cr   = RTC_CR;
+    m2 = DWT_CYCCNT;
+
+    uint32_t cyc = power_stop();
+    m3 = DWT_CYCCNT;
+
+    rtc_wut_disarm();
+    rtc_get(&t);
+    uint32_t e1 = rtc_epoch(&t);
+    m4 = DWT_CYCCNT;
+
+    wr_u32(&b[0], e0);
+    wr_u32(&b[4], e1);
+    wr_u32(&b[8], cyc);
+    wr_u32(&b[12], rtc_source());
+    wr_u32(&b[16], wutr);
+    wr_u32(&b[20], cr);
+    wr_u32(&b[24], (m1 - m0) / (HCLK_HZ / 1000U));
+    wr_u32(&b[28], (m2 - m1) / (HCLK_HZ / 1000U));
+    wr_u32(&b[32], (m3 - m2) / (HCLK_HZ / 1000U));
+    wr_u32(&b[36], (m4 - m3) / (HCLK_HZ / 1000U));
+    reply_buf(CMD_RTC_STOPWAKE | 0x80U, b, sizeof(b));
+}
+
+static void handle_rtc_stats(void)
+{
+    uint8_t b[32];
+    const rtc_stats_t *rs = rtc_stats();
+    wr_u32(&b[0],  rs->source);
+    wr_u32(&b[4],  rs->lse_timeouts);
+    wr_u32(&b[8],  rs->init_done);
+    wr_u32(&b[12], rs->init_skipped);
+    wr_u32(&b[16], rs->rsf_timeouts);
+    wr_u32(&b[20], rs->wakeups);
+    wr_u32(&b[24], rs->boots);
+    wr_u32(&b[28], rs->wut_errors);
+    reply_buf(CMD_RTC_STATS | 0x80U, b, sizeof(b));
+}
+
 int main(void)
 {
 	clock_init();
@@ -490,6 +587,7 @@ int main(void)
 	dwt_init();
 	w25_init(SPI_BR_DIV8);
 	power_init();
+	rtc_init();
 
 	uart_dma_puts("\r\n== Day19 clock 84 MHz ==\r\n");
 	uart_dma_puts("sysclk source: ");
@@ -550,6 +648,10 @@ int main(void)
         case CMD_SLEEP:    handle_sleep(pl, v.len); break;
         case CMD_STOP:     handle_stop();           break;
         case CMD_PWRSTATS: handle_pwrstats();       break;
+        case CMD_RTC_SET:      handle_rtc_set(pl, v.len); break;
+        case CMD_RTC_GET:      handle_rtc_get();          break;
+        case CMD_RTC_STOPWAKE: handle_rtc_stopwake(pl, v.len); break;
+        case CMD_RTC_STATS:    handle_rtc_stats();        break;
         case CMD_JEDEC: {
             uint8_t b[4];
             wr_u32(b, w25_jedec());
