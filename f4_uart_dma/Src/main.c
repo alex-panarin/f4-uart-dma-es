@@ -15,6 +15,7 @@
 #include "spi_dma.h"
 #include "w25_dma.h"
 #include "clock.h"
+#include "power.h"
 
 #define CMD_ECHO     	0x01U
 #define CMD_STATS    	0x02U
@@ -34,6 +35,9 @@
 #define CMD_FSESSION 	0x24U
 #define CMD_FPAGE    	0x25U
 #define CMD_FSYNC    	0x26U
+#define CMD_SLEEP     0x27U
+#define CMD_STOP      0x28U
+#define CMD_PWRSTATS  0x29U
 
 #define FSESS_MAX_PAGES 256U   /* битмап 32 байта = до 64 КБ */
 
@@ -236,8 +240,46 @@ static void handle_rxstats(void)
     wr_u32(&b[16], uart_dma_head());
     wr_u32(&b[20], uart_dma_tail());
     reply_buf(CMD_RXSTATS | 0x80U, b, sizeof(b));
+
 }
 
+static void handle_sleep(const uint8_t *p, uint16_t len)
+{
+    uint32_t ms = (len >= 4U) ? rd_u32(p) : 100U;
+    uint32_t cycles = power_sleep_ms(ms);
+
+    uint8_t b[8];
+    wr_u32(&b[0], cycles);
+    wr_u32(&b[4], ms);
+    reply_buf(CMD_SLEEP | 0x80U, b, sizeof(b));
+}
+
+static void handle_stop(void)
+{
+    /* Ответ уходит ПОСЛЕ пробуждения: хост обязан разбудить устройство. */
+    uint32_t cycles = power_stop();
+
+    uint8_t b[8];
+    wr_u32(&b[0], cycles);
+    wr_u32(&b[4], clock_sysclk_source());
+    reply_buf(CMD_STOP | 0x80U, b, sizeof(b));
+}
+
+static void handle_pwrstats(void)
+{
+    uint8_t b[28];
+    const power_stats_t *ps = power_stats();
+
+    wr_u32(&b[0],  ps->sleep_entries);
+    wr_u32(&b[4],  ps->stop_entries);
+    wr_u32(&b[8],  ps->wake_exti);
+    wr_u32(&b[12], ps->clock_restores);
+    wr_u32(&b[16], ps->drain_timeouts);
+    wr_u32(&b[20], ps->last_wake_cycles);
+    wr_u32(&b[24], ps->rx_flushed);
+
+    reply_buf(CMD_PWRSTATS | 0x80U, b, sizeof(b));
+}
 static void handle_stall(const uint8_t *p, uint16_t len)
 {
     uint32_t ms = (len >= 4U) ? rd_u32(p) : 0U;
@@ -447,6 +489,7 @@ int main(void)
 	frame_rx_init();
 	dwt_init();
 	w25_init(SPI_BR_DIV8);
+	power_init();
 
 	uart_dma_puts("\r\n== Day19 clock 84 MHz ==\r\n");
 	uart_dma_puts("sysclk source: ");
@@ -504,6 +547,9 @@ int main(void)
         case CMD_SYSINFO:  handle_sysinfo(); 				 break;
         case CMD_PING:     handle_ping(pl, v.len);  		 break;
         case CMD_CLOCK_INFO: handle_clock_info();    		 break;
+        case CMD_SLEEP:    handle_sleep(pl, v.len); break;
+        case CMD_STOP:     handle_stop();           break;
+        case CMD_PWRSTATS: handle_pwrstats();       break;
         case CMD_JEDEC: {
             uint8_t b[4];
             wr_u32(b, w25_jedec());
